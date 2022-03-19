@@ -125,9 +125,9 @@ func WithTimeLayout(timeLayout string) Option {
 }
 
 // WithDisableConsole WithEnableConsole write log to os.Stdout or os.Stderr
-func WithDisableConsole() Option {
+func WithDisableConsole(console bool) Option {
 	return func(opt *option) {
-		opt.disableConsole = true
+		opt.disableConsole = console
 	}
 }
 
