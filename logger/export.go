@@ -53,6 +53,7 @@ func (l *Logger) SetCtx(ctx context.Context, field ...zap.Field) (context.Contex
 	return ctx, log
 }
 
+
 func ConsoleInfo(namespace string, v interface{}) {
 	log.Println(fmt.Sprintf(infoLevel, green, namespace, v))
 }
