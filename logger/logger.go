@@ -37,7 +37,6 @@ type option struct {
 	file           io.Writer
 	timeLayout     string
 	disableConsole bool
-	rotate         *lumberjack.Logger
 }
 
 // WithDebugLevel only greater than 'level' will output
@@ -95,7 +94,7 @@ func WithFileP(file string) Option {
 // WithLumberjack setting the lumberjack
 func WithLumberjack(logger *lumberjack.Logger) Option{
 	return func(o *option) {
-		o.rotate = logger
+		o.file = logger
 	}
 }
 
@@ -107,19 +106,14 @@ func WithFileRotationP(file string) Option {
 	}
 
 	return func(opt *option) {
-		if opt.rotate == nil{
-			opt.file = &lumberjack.Logger{ // concurrent-safed
-				Filename:   file,  // 文件路径
-				MaxSize:    128,   // 单个文件最大尺寸，默认单位 M
-				MaxBackups: 300,   // 最多保留 300 个备份
-				MaxAge:     30,    // 最大时间，默认单位 day
-				LocalTime:  true,  // 使用本地时间
-				Compress:   false, // 是否压缩 disabled by default
-			}
-			return
+		opt.file = &lumberjack.Logger{ // concurrent-safed
+			Filename:   file,  // 文件路径
+			MaxSize:    128,   // 单个文件最大尺寸，默认单位 M
+			MaxBackups: 300,   // 最多保留 300 个备份
+			MaxAge:     30,    // 最大时间，默认单位 day
+			LocalTime:  true,  // 使用本地时间
+			Compress:   false, // 是否压缩 disabled by default
 		}
-
-		opt.file = opt.rotate
 	}
 }
 
