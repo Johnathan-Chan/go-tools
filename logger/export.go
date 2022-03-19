@@ -53,18 +53,18 @@ func (l *Logger) SetCtx(ctx context.Context, field ...zap.Field) (context.Contex
 	return ctx, log
 }
 
-func (l Logger) ConsoleInfo(namespace string, v interface{}) {
+func ConsoleInfo(namespace string, v interface{}) {
 	log.Println(fmt.Sprintf(infoLevel, green, namespace, v))
 }
 
-func (l Logger) ConsoleWarn(namespace string, v interface{}) {
+func ConsoleWarn(namespace string, v interface{}) {
 	log.Println(fmt.Sprintf(warnLevel, yellow, namespace, v))
 }
 
-func (l Logger) ConsoleError(namespace string, v interface{}) {
+func ConsoleError(namespace string, v interface{}) {
 	log.Println(fmt.Sprintf(errorLevel, red, namespace, v))
 }
 
-func (l Logger) ConsolePainc(namespace string, v interface{}) {
+func ConsolePainc(namespace string, v interface{}) {
 	log.Println(fmt.Sprintf(paincLevel, purple, namespace, v))
 }

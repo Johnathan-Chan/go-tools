@@ -12,10 +12,11 @@ func TestLogger(t *testing.T) {
 		WithTimeLayout("2006-01-02 15:04:05 Monday"),
 		WithInfoLevel())
 
-	log.ConsoleInfo("asdasdasd")
-	log.ConsoleError("asdasdasd")
-	log.ConsoleWarn("asdasdasd")
-	log.ConsolePainc("asdasdasd")
+	test := "test"
+	ConsoleInfo(test, "asdasdasd")
+	ConsoleError(test, "asdasdasd")
+	ConsoleWarn(test, "asdasdasd")
+	ConsolePainc(test, "asdasdasd")
 	log.Debug("asdasd")
 	log.Info("infoLevel")
 
