@@ -16,10 +16,10 @@ const (
 )
 
 const (
-	infoLevel = "\u001B[%dm [INFO] %v \u001B[0m"
-	warnLevel  = "\u001B[%dm [WARN] %v \u001B[0m"
-	errorLevel = "\u001B[%dm [ERROR] %v \u001B[0m"
-	paincLevel = "\u001B[%dm [PAINC] %v \u001B[0m"
+	infoLevel = "\u001B[%dm [INFO] [%s] %v \u001B[0m"
+	warnLevel  = "\u001B[%dm [WARN] [%s] %v \u001B[0m"
+	errorLevel = "\u001B[%dm [ERROR] [%s] %v \u001B[0m"
+	paincLevel = "\u001B[%dm [PAINC] [%s] %v \u001B[0m"
 )
 
 type Logger struct {
@@ -53,18 +53,18 @@ func (l *Logger) SetCtx(ctx context.Context, field ...zap.Field) (context.Contex
 	return ctx, log
 }
 
-func (l Logger) ConsoleInfo(v interface{}) {
-	log.Println(fmt.Sprintf(infoLevel, green, v))
+func (l Logger) ConsoleInfo(namespace string, v interface{}) {
+	log.Println(fmt.Sprintf(infoLevel, green, namespace, v))
 }
 
-func (l Logger) ConsoleWarn(v interface{}) {
-	log.Println(fmt.Sprintf(warnLevel, yellow, v))
+func (l Logger) ConsoleWarn(namespace string, v interface{}) {
+	log.Println(fmt.Sprintf(warnLevel, yellow, namespace, v))
 }
 
-func (l Logger) ConsoleError(v interface{}) {
-	log.Println(fmt.Sprintf(errorLevel, red, v))
+func (l Logger) ConsoleError(namespace string, v interface{}) {
+	log.Println(fmt.Sprintf(errorLevel, red, namespace, v))
 }
 
-func (l Logger) ConsolePainc(v interface{}) {
-	log.Println(fmt.Sprintf(paincLevel, purple, v))
+func (l Logger) ConsolePainc(namespace string, v interface{}) {
+	log.Println(fmt.Sprintf(paincLevel, purple, namespace, v))
 }
