@@ -168,7 +168,7 @@ func NewJSONLogger(opts ...Option) (*zap.Logger, error) {
 
 	jsonEncoder := zapcore.NewJSONEncoder(encoderConfig)
 
-	// lowPriority usd by info\debug\warn
+	// lowPriority usd by infoLevel\debug\warnLevel
 	lowPriority := zap.LevelEnablerFunc(func(lvl zapcore.Level) bool {
 		return lvl >= opt.level && lvl < zapcore.ErrorLevel
 	})
