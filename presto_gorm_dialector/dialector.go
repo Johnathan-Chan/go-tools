@@ -3,6 +3,7 @@ package presto_gorm_dialector
 import (
 	"database/sql"
 	"fmt"
+	_ "github.com/prestodb/presto-go-client/presto"
 	"math"
 	"strings"
 	"time"
