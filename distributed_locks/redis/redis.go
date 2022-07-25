@@ -1,11 +1,13 @@
 package redis
 
 import (
+	"container/list"
 	"context"
 	"errors"
 	"github.com/Johnathan-Chan/go-tools/distributed_locks"
 	"github.com/go-redis/redis/v8"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -16,7 +18,7 @@ var (
 
 // RedisAgent the redis manager that manage the local key
 type RedisAgent struct {
-	// store the redis key in local, the local value is the *redisLock
+	// store the redis key in local, the local value is the *list.Element
 	keyMap sync.Map
 	// the redis client
 	client *redis.Client
@@ -24,14 +26,35 @@ type RedisAgent struct {
 	lock sync.Mutex
 	// manager key
 	key string
+	// gc link
+	gcLink *list.List
 }
 
-func NewRedisAgent(client *redis.Client) distributed_locks.Agent {
-	agent := &RedisAgent{client: client, key: "redis_agent_manager_lock"}
-
-	// create the lock pipeline
-	go agent.subscribe()
+func NewRedisAgent(client *redis.Client, gcTime time.Duration) distributed_locks.Agent {
+	agent := &RedisAgent{client: client, gcLink: list.New(), key: "redis_agent_manager_lock"}
+	go agent.gc(gcTime)
 	return agent
+}
+
+func (r *RedisAgent) gc(gcTime time.Duration){
+	ticker := time.Tick(gcTime)
+	for range ticker{
+		for head := r.gcLink.Front(); head != nil; head = head.Next(){
+			if head.Value != nil {
+				lockValue, ok := head.Value.(*redisLock)
+				if !ok{
+					continue
+				}
+
+				if lockValue.active > 0{
+					break
+				}
+
+				r.gcLink.Remove(head)
+				r.keyMap.Delete(lockValue.key)
+			}
+		}
+	}
 }
 
 // Lock obtain the lock
@@ -51,23 +74,22 @@ func (r *RedisAgent) Lock(key string, timeout, renewTime int64) error {
 		lockObj, ok = r.keyMap.Load(key)
 		if !ok {
 			newContext, cancelFunc := context.WithCancel(r.client.Context())
-			lockObj = newRedisLock(r.client, newContext,cancelFunc)
+			lockValue := newRedisLock(key, r.client, newContext,cancelFunc)
+			// add to gc link
+			lockObj = r.gcLink.PushBack(lockValue)
 			r.keyMap.Store(key, lockObj)
 		}
 	}
 
 	// distributed lock to local lock
-	redisLockObj := lockObj.(*redisLock)
-
-	ReLock:
-	redisLockObj.lock.Lock()
+	redisLockObj := lockObj.(*list.Element)
+	redisLockValue := redisLockObj.Value.(*redisLock)
 
 	// get redis lock
-	if err := redisLockObj.obtainLock(redisLockObj.ctx, key, timeout, renewTime); err != nil{
-		// get redis lock failed, block the process
-		// when the lock release, go to reLock
-		goto ReLock
-	}
+	redisLockValue.obtainLock(redisLockValue.ctx, key, timeout, renewTime)
+
+	// record to gc link
+	r.gcLink.MoveAfter(redisLockObj, r.gcLink.Back())
 
 	return nil
 }
@@ -81,84 +103,58 @@ func (r *RedisAgent) UnLock(key string){
 	}
 
 	// distributed lock to local lock
-	redisLockObj, ok := lockObj.(*redisLock)
+	redisLockObj, ok := lockObj.(*list.Element)
 	if !ok {
 		return
 	}
 
+	redisLockValue, ok := redisLockObj.Value.(*redisLock)
+	if !ok{
+		return
+	}
+
 	// cancel the renew
-	redisLockObj.cancelFunc()
+	redisLockValue.cancelFunc()
 	// release the redis lock
-	if err := redisLockObj.releaseLock(key); err != nil{
+	if err := redisLockValue.releaseLock(key); err != nil{
 		return
-	}
-
-	//  publish the lock topic about key
-	if err := r.publish(key); err != nil{
-		return
-	}
-}
-
-// publish that publish the lock topic about key
-func (r *RedisAgent) publish(key string) error {
-	return r.client.Publish(r.client.Context(), r.key, key).Err()
-}
-
-// subscribe that subscribe the lock topic
-func (r *RedisAgent) subscribe() {
-	pipeline := r.client.Subscribe(r.client.Context(), r.key).Channel()
-	for {
-		select {
-		case msg := <-pipeline:
-			key := msg.Payload
-			// Get the local lock
-			lockObj, ok := r.keyMap.Load(key)
-			if !ok {
-				continue
-			}
-
-			// distributed lock to local lock
-			redisLockObj, ok := lockObj.(*redisLock)
-			if !ok {
-				continue
-			}
-
-			// release the local lock
-			redisLockObj.lock.Unlock()
-		case <-r.client.Context().Done():
-			return
-		}
 	}
 }
 
 // redisLock redis lock map to the lock mutex
 type redisLock struct {
+	key string
 	lock       sync.Mutex
 	client     *redis.Client
 	ctx        context.Context
 	cancelFunc context.CancelFunc
-	noFirst      bool
+	active     int64
 }
 
-func newRedisLock(client *redis.Client, ctx context.Context, cancelFunc context.CancelFunc) *redisLock {
-	return &redisLock{client: client, ctx: ctx, cancelFunc: cancelFunc}
+func newRedisLock(key string, client *redis.Client, ctx context.Context, cancelFunc context.CancelFunc) *redisLock {
+	return &redisLock{key: key, client: client, ctx: ctx, cancelFunc: cancelFunc}
 }
 
 // obtainLock get the redis lock
-func (r *redisLock) obtainLock(ctx context.Context, key string, timeout, renewTime int64) error {
+func (r *redisLock) obtainLock(ctx context.Context, key string, timeout, renewTime int64) {
+
+	// if want to get lock, it will be active
+	atomic.AddInt64(&r.active, 1)
+
+	// get local lock
+	r.lock.Lock()
+
 	var (
 		result interface{}
 		err error
 	)
 
-	// if the first, will keep acquiring locks until you know success
-	// if no first, will just request once
+	// it will keep acquiring locks until you know success
 	for result, err = r.client.Do(r.client.Context(), "SET", key, 1, "NX", "EX", timeout).Result();
-		(result != "OK" || err != nil) && !r.noFirst;{
+		result != "OK" || err != nil;{
 
 		result, err = r.client.Do(r.client.Context(), "SET", key, 1, "NX", "EX", timeout).Result()
 		if result == "OK" && err == nil {
-			r.noFirst = true
 			break
 		}
 	}
@@ -166,10 +162,7 @@ func (r *redisLock) obtainLock(ctx context.Context, key string, timeout, renewTi
 	if result == "OK" && err == nil {
 		// if get the redis lock success it will be go to renew
 		go r.renew(ctx, key, timeout, renewTime)
-		return nil
 	}
-
-	return GetLockFailedErr
 }
 
 // releaseLock release the redis lock
@@ -178,6 +171,11 @@ func (r *redisLock) releaseLock(key string) error {
 	if err != nil{
 		return err
 	}
+
+	atomic.AddInt64(&r.active, -1)
+
+	// release the local lock
+	r.lock.Unlock()
 	return nil
 }
 
@@ -185,12 +183,13 @@ func (r *redisLock) releaseLock(key string) error {
 // renew about the lock before the lock release
 func (r *redisLock) renew(ctx context.Context, key string, timeout, renewTime int64) {
 	reTime := time.Duration(renewTime*int64(time.Second))
+	ticker := time.Tick(reTime)
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-time.Tick(reTime):
-			_, _ = r.client.Do(r.client.Context(), "SET", key, 1, "NX", "EX", timeout).Result()
+		case <-ticker:
+			_, _ = r.client.Expire(r.client.Context(), key, time.Duration(timeout*int64(time.Second))).Result()
 		}
 	}
 }
