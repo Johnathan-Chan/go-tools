@@ -114,7 +114,8 @@ func (c *Consumer) Close() {
 	c.cg.Close()
 }
 
-type Handler func(*sarama.ConsumerMessage)
+type CommitHandler func()
+type Handler func(*sarama.ConsumerMessage, CommitHandler)
 
 // ConsumHandler ...
 type ConsumHandler struct {
@@ -129,9 +130,11 @@ func NewConsumHandler(handler Handler, strategy CommitOffsetStrategy) *ConsumHan
 // ConsumeClaim ..
 func (h *ConsumHandler) ConsumeClaim(sess sarama.ConsumerGroupSession, claim sarama.ConsumerGroupClaim) error {
 	for msg := range claim.Messages() {
-		h.handler(msg)
+		h.handler(msg, func() {
+			// if you set the no auto commit, you have to commit by yourself
+			h.strategy.Commit(sess)
+		})
 		sess.MarkMessage(msg, "")
-		h.strategy.Commit(sess)
 	}
 	return nil
 }

@@ -19,8 +19,9 @@ func TestConsumer(t *testing.T) {
 		return
 	}
 
-	consumer.Run(func(message *sarama.ConsumerMessage) {
+	consumer.Run(func(message *sarama.ConsumerMessage, commit CommitHandler) {
 		log.Printf("partition:%d, offset:%d, value:%s", message.Partition, message.Offset, message.Value)
+		commit()
 	})
 
 	for{
@@ -44,5 +45,33 @@ func TestProducer(t *testing.T) {
 		time.Sleep(time.Second)
 		producer.Publish("test", index)
 		log.Println("producer:", index)
+	}
+}
+
+func TestGSSAPIAuthConsumer(t *testing.T) {
+	kafka := NewKafka(
+		WithHosts([]string{"local-kafka:9092"}),
+		WithAuth(&GSSAPIAuth{
+			Username: "kafka/local-kafka",
+			ServiceName: "kafka",
+			Realm: "KAFKA.COM",
+			KeyTabPath: "D:/store/kafka.keytab",
+			KerberosConfigPath: "D:/store/krb5.conf",
+		}),
+	)
+
+	consumer, err := kafka.CreateConsumerGroup([]string{"douyin"}, "test_consumer", new(NoAutoCommitOffset))
+	if err != nil{
+		log.Println(err)
+		return
+	}
+
+	consumer.Run(func(message *sarama.ConsumerMessage, commit CommitHandler) {
+		log.Printf("partition:%d, offset:%d, value:%s", message.Partition, message.Offset, message.Value)
+		commit()
+	})
+
+	for{
+
 	}
 }
