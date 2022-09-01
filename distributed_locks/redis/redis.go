@@ -32,7 +32,7 @@ type RedisAgent struct {
 
 func NewRedisAgent(client *redis.Client, gcTime time.Duration) distributed_locks.Agent {
 	agent := &RedisAgent{client: client, gcLink: list.New(), key: "redis_agent_manager_lock"}
-	go agent.gc(gcTime)
+	//go agent.gc(gcTime)
 	return agent
 }
 
