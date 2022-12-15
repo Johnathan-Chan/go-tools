@@ -10,7 +10,7 @@ import (
 
 func TestRedisAgent(t *testing.T) {
 	redisOptions := &redis.Options{
-		Addr:         "172.16.11.200:6379",
+		Addr:         "127.0.0.1:6379",
 		Password:     "",
 		DB:           0,
 		PoolSize:     5,
@@ -26,7 +26,7 @@ func TestRedisAgent(t *testing.T) {
 	for a, b:=0, 0; ;a++ {
 		time.Sleep(time.Nanosecond)
 		go func(innerKey string) {
-			targetKey := innerKey + strconv.Itoa(a % 4)
+			targetKey := innerKey + strconv.Itoa(a % 20)
 			if err := ragent.Lock(targetKey, 10, 5); err == nil{
 				defer ragent.UnLock(targetKey)
 			}

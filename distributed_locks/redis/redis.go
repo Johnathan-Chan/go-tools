@@ -1,10 +1,10 @@
 package redis
 
 import (
-	"container/list"
 	"context"
 	"errors"
 	"github.com/Johnathan-Chan/go-tools/distributed_locks"
+	"github.com/Johnathan-Chan/go-tools/logger"
 	"github.com/go-redis/redis/v8"
 	"sync"
 	"sync/atomic"
@@ -24,36 +24,32 @@ type RedisAgent struct {
 	client *redis.Client
 	// agent lock that prevent duplicate creation of objects
 	lock sync.Mutex
+	rwLock sync.RWMutex
 	// manager key
 	key string
-	// gc link
-	gcLink *list.List
 }
 
 func NewRedisAgent(client *redis.Client, gcTime time.Duration) distributed_locks.Agent {
-	agent := &RedisAgent{client: client, gcLink: list.New(), key: "redis_agent_manager_lock"}
-	//go agent.gc(gcTime)
+	agent := &RedisAgent{client: client, key: "redis_agent_manager_lock"}
+	go agent.gc(gcTime)
 	return agent
 }
 
 func (r *RedisAgent) gc(gcTime time.Duration){
 	ticker := time.Tick(gcTime)
 	for range ticker{
-		for head := r.gcLink.Front(); head != nil; head = head.Next(){
-			if head.Value != nil {
-				lockValue, ok := head.Value.(*redisLock)
-				if !ok{
-					continue
+		// get the write lock prevent to read lock
+		r.rwLock.Lock()
+		r.keyMap.Range(func(key, value interface{}) bool {
+			if lock, ok := value.(*redisLock); ok {
+				if lock.active <= 0 {
+					r.keyMap.Delete(key)
+					logger.ConsoleWarn("lockGc", key)
 				}
-
-				if lockValue.active > 0{
-					break
-				}
-
-				r.gcLink.Remove(head)
-				r.keyMap.Delete(lockValue.key)
 			}
-		}
+			return true
+		})
+		r.rwLock.Unlock()
 	}
 }
 
@@ -63,6 +59,10 @@ func (r *RedisAgent) Lock(key string, timeout, renewTime int64) error {
 	if timeout <= renewTime {
 		return RenewTimeErr
 	}
+
+	// Get the read lock prevent to gc
+	r.rwLock.RLock()
+	defer r.rwLock.RUnlock()
 
 	// Get the local lock
 	lockObj, ok := r.keyMap.Load(key)
@@ -74,23 +74,16 @@ func (r *RedisAgent) Lock(key string, timeout, renewTime int64) error {
 		lockObj, ok = r.keyMap.Load(key)
 		if !ok {
 			newContext, cancelFunc := context.WithCancel(r.client.Context())
-			lockValue := newRedisLock(key, r.client, newContext,cancelFunc)
-			// add to gc link
-			lockObj = r.gcLink.PushBack(lockValue)
+			lockObj = newRedisLock(key, r.client, newContext,cancelFunc)
 			r.keyMap.Store(key, lockObj)
 		}
 	}
 
 	// distributed lock to local lock
-	redisLockObj := lockObj.(*list.Element)
-	redisLockValue := redisLockObj.Value.(*redisLock)
+	redisLockObj := lockObj.(*redisLock)
 
 	// get redis lock
-	redisLockValue.obtainLock(redisLockValue.ctx, key, timeout, renewTime)
-
-	// record to gc link
-	r.gcLink.MoveAfter(redisLockObj, r.gcLink.Back())
-
+	redisLockObj.obtainLock(redisLockObj.ctx, key, timeout, renewTime)
 	return nil
 }
 
@@ -103,20 +96,15 @@ func (r *RedisAgent) UnLock(key string){
 	}
 
 	// distributed lock to local lock
-	redisLockObj, ok := lockObj.(*list.Element)
+	redisLockObj, ok := lockObj.(*redisLock)
 	if !ok {
 		return
 	}
 
-	redisLockValue, ok := redisLockObj.Value.(*redisLock)
-	if !ok{
-		return
-	}
-
 	// cancel the renew
-	redisLockValue.cancelFunc()
+	redisLockObj.cancelFunc()
 	// release the redis lock
-	if err := redisLockValue.releaseLock(key); err != nil{
+	if err := redisLockObj.releaseLock(key); err != nil{
 		return
 	}
 }
