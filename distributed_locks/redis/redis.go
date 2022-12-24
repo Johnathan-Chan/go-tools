@@ -69,7 +69,6 @@ func (r *RedisAgent) Lock(key string, timeout, renewTime int64) error {
 	if !ok {
 		// prevent duplicate creation of objects
 		r.lock.Lock()
-		defer r.lock.Unlock()
 
 		lockObj, ok = r.keyMap.Load(key)
 		if !ok {
@@ -77,6 +76,9 @@ func (r *RedisAgent) Lock(key string, timeout, renewTime int64) error {
 			lockObj = newRedisLock(key, r.client, newContext,cancelFunc)
 			r.keyMap.Store(key, lockObj)
 		}
+
+		// prevent to stop other lock
+		r.lock.Unlock()
 	}
 
 	// distributed lock to local lock
