@@ -72,8 +72,7 @@ func (r *RedisAgent) Lock(key string, timeout, renewTime int64) error {
 
 		lockObj, ok = r.keyMap.Load(key)
 		if !ok {
-			newContext, cancelFunc := context.WithCancel(r.client.Context())
-			lockObj = newRedisLock(key, r.client, newContext,cancelFunc)
+			lockObj = newRedisLock(key, r.client)
 			r.keyMap.Store(key, lockObj)
 		}
 
@@ -85,7 +84,8 @@ func (r *RedisAgent) Lock(key string, timeout, renewTime int64) error {
 	redisLockObj := lockObj.(*redisLock)
 
 	// get redis lock
-	redisLockObj.obtainLock(redisLockObj.ctx, key, timeout, renewTime)
+	newContext, cancelFunc := context.WithCancel(r.client.Context())
+	redisLockObj.obtainLock(newContext, cancelFunc, key, timeout, renewTime)
 	return nil
 }
 
@@ -121,18 +121,22 @@ type redisLock struct {
 	active     int64
 }
 
-func newRedisLock(key string, client *redis.Client, ctx context.Context, cancelFunc context.CancelFunc) *redisLock {
-	return &redisLock{key: key, client: client, ctx: ctx, cancelFunc: cancelFunc}
+func newRedisLock(key string, client *redis.Client) *redisLock {
+	return &redisLock{key: key, client: client}
 }
 
 // obtainLock get the redis lock
-func (r *redisLock) obtainLock(ctx context.Context, key string, timeout, renewTime int64) {
+func (r *redisLock) obtainLock(ctx context.Context, cancelFunc context.CancelFunc, key string, timeout, renewTime int64) {
 
 	// if want to get lock, it will be active
 	atomic.AddInt64(&r.active, 1)
 
 	// get local lock
 	r.lock.Lock()
+
+	// new context
+	r.ctx = ctx
+	r.cancelFunc = cancelFunc
 
 	var (
 		result interface{}
@@ -151,7 +155,7 @@ func (r *redisLock) obtainLock(ctx context.Context, key string, timeout, renewTi
 
 	if result == "OK" && err == nil {
 		// if get the redis lock success it will be go to renew
-		go r.renew(ctx, key, timeout, renewTime)
+		go r.renew(r.ctx, key, timeout, renewTime)
 	}
 }
 
@@ -173,12 +177,12 @@ func (r *redisLock) releaseLock(key string) error {
 // renew about the lock before the lock release
 func (r *redisLock) renew(ctx context.Context, key string, timeout, renewTime int64) {
 	reTime := time.Duration(renewTime*int64(time.Second))
-	ticker := time.Tick(reTime)
+	ticker := time.NewTicker(reTime)
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker:
+		case <-ticker.C:
 			_, _ = r.client.Expire(r.client.Context(), key, time.Duration(timeout*int64(time.Second))).Result()
 		}
 	}
