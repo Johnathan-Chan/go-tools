@@ -36,8 +36,8 @@ func NewRedisAgent(client *redis.Client, gcTime time.Duration) distributed_locks
 }
 
 func (r *RedisAgent) gc(gcTime time.Duration){
-	ticker := time.Tick(gcTime)
-	for range ticker{
+	ticker := time.NewTicker(gcTime)
+	for range ticker.C{
 		// get the write lock prevent to read lock
 		r.rwLock.Lock()
 		r.keyMap.Range(func(key, value interface{}) bool {
@@ -94,12 +94,14 @@ func (r *RedisAgent) UnLock(key string){
 	// Get the local lock
 	lockObj, ok := r.keyMap.Load(key)
 	if !ok {
+		logger.ConsoleWarn("释放锁查找不到", key)
 		return
 	}
 
 	// distributed lock to local lock
 	redisLockObj, ok := lockObj.(*redisLock)
 	if !ok {
+		logger.ConsoleWarn("释放锁断言失败", key)
 		return
 	}
 
@@ -107,6 +109,7 @@ func (r *RedisAgent) UnLock(key string){
 	redisLockObj.cancelFunc()
 	// release the redis lock
 	if err := redisLockObj.releaseLock(key); err != nil{
+		logger.ConsoleWarn("释放锁失败", key)
 		return
 	}
 }
@@ -114,7 +117,7 @@ func (r *RedisAgent) UnLock(key string){
 // redisLock redis lock map to the lock mutex
 type redisLock struct {
 	key string
-	lock       sync.Mutex
+	lock       *sync.Mutex
 	client     *redis.Client
 	ctx        context.Context
 	cancelFunc context.CancelFunc
@@ -122,7 +125,7 @@ type redisLock struct {
 }
 
 func newRedisLock(key string, client *redis.Client) *redisLock {
-	return &redisLock{key: key, client: client}
+	return &redisLock{key: key, lock: new(sync.Mutex), client: client}
 }
 
 // obtainLock get the redis lock
@@ -147,6 +150,7 @@ func (r *redisLock) obtainLock(ctx context.Context, cancelFunc context.CancelFun
 	for result, err = r.client.Do(r.client.Context(), "SET", key, 1, "NX", "EX", timeout).Result();
 		result != "OK" || err != nil;{
 
+		logger.ConsoleInfo(key+"循环获取锁", err)
 		result, err = r.client.Do(r.client.Context(), "SET", key, 1, "NX", "EX", timeout).Result()
 		if result == "OK" && err == nil {
 			break
@@ -161,15 +165,15 @@ func (r *redisLock) obtainLock(ctx context.Context, cancelFunc context.CancelFun
 
 // releaseLock release the redis lock
 func (r *redisLock) releaseLock(key string) error {
+	// release the local lock
+	defer r.lock.Unlock()
+
 	_, err := r.client.Del(r.client.Context(), key).Result()
 	if err != nil{
 		return err
 	}
 
 	atomic.AddInt64(&r.active, -1)
-
-	// release the local lock
-	r.lock.Unlock()
 	return nil
 }
 
@@ -181,9 +185,11 @@ func (r *redisLock) renew(ctx context.Context, key string, timeout, renewTime in
 	for {
 		select {
 		case <-ctx.Done():
+			ticker.Stop()
 			return
 		case <-ticker.C:
 			_, _ = r.client.Expire(r.client.Context(), key, time.Duration(timeout*int64(time.Second))).Result()
+			logger.ConsoleInfo("续约", key)
 		}
 	}
 }
