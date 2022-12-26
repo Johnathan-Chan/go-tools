@@ -61,7 +61,6 @@ func (r *RedisAgent) Lock(key string, timeout, renewTime int64) error {
 
 	// Get the read lock prevent to gc
 	r.rwLock.RLock()
-	defer r.rwLock.RUnlock()
 
 	// Get the local lock
 	lockObj, ok := r.keyMap.Load(key)
@@ -81,6 +80,10 @@ func (r *RedisAgent) Lock(key string, timeout, renewTime int64) error {
 
 	// distributed lock to local lock
 	redisLockObj := lockObj.(*redisLock)
+
+	// if want to get lock, it will be active
+	atomic.AddInt64(&(redisLockObj.active), 1)
+	r.rwLock.RUnlock()
 
 	// get redis lock
 	redisLockObj.obtainLock(key, timeout, renewTime)
@@ -125,10 +128,6 @@ func newRedisLock(key string, client *redis.Client, dChan chan int) *redisLock {
 
 // obtainLock get the redis lock
 func (r *redisLock) obtainLock(key string, timeout, renewTime int64) {
-
-	// if want to get lock, it will be active
-	atomic.AddInt64(&r.active, 1)
-
 	// get local lock
 	r.lock.Lock()
 
@@ -166,7 +165,7 @@ func (r *redisLock) releaseLock(key string) error {
 		return err
 	}
 
-	atomic.AddInt64(&r.active, -1)
+	atomic.AddInt64(&(r.active), -1)
 	return nil
 }
 
