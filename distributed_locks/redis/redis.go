@@ -41,7 +41,7 @@ func (r *RedisAgent) gc(gcTime time.Duration){
 		r.rwLock.Lock()
 		r.keyMap.Range(func(key, value interface{}) bool {
 			if lock, ok := value.(*redisLock); ok {
-				if lock.active <= 0 {
+				if atomic.LoadInt64(&(lock.active)) <= 0 {
 					r.keyMap.Delete(key)
 					logger.ConsoleWarn("lockGc", key)
 				}
@@ -120,6 +120,7 @@ type redisLock struct {
 	client     *redis.Client
 	deleteChan chan int
 	active     int64
+	isLock     int64
 }
 
 func newRedisLock(key string, client *redis.Client, dChan chan int) *redisLock {
@@ -151,6 +152,9 @@ func (r *redisLock) obtainLock(key string, timeout, renewTime int64) {
 		// if get the redis lock success it will be go to renew
 		go r.renew(key, timeout, renewTime)
 	}
+
+	atomic.StoreInt64(&(r.isLock), 1)
+	logger.ConsoleInfo("加锁", key)
 }
 
 // releaseLock release the redis lock
@@ -159,13 +163,17 @@ func (r *redisLock) releaseLock(key string) error {
 	defer r.lock.Unlock()
 
 	// cancel the renew
+	logger.ConsoleInfo("停止发送续约信号", key)
 	r.deleteChan <- 1
+	logger.ConsoleInfo("停止发送续约信号完成", key)
 	_, err := r.client.Del(r.client.Context(), key).Result()
 	if err != nil{
 		return err
 	}
 
 	atomic.AddInt64(&(r.active), -1)
+	atomic.StoreInt64(&(r.isLock), 0)
+	logger.ConsoleInfo("解锁", key)
 	return nil
 }
 
@@ -178,8 +186,14 @@ func (r *redisLock) renew(key string, timeout, renewTime int64) {
 		select {
 		case <-r.deleteChan:
 			ticker.Stop()
+			logger.ConsoleInfo("停止续约", key)
 			return
 		case <-ticker.C:
+			if atomic.LoadInt64(&(r.isLock)) == 0{
+				ticker.Stop()
+				logger.ConsoleInfo("延迟停止续约", key)
+				return
+			}
 			_, _ = r.client.Expire(r.client.Context(), key, time.Duration(timeout*int64(time.Second))).Result()
 			logger.ConsoleInfo("续约", key)
 		}
